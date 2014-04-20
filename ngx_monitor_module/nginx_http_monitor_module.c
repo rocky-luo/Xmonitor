@@ -108,15 +108,8 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
 		      "body length is %O,but read %z\n", content_length, n);
 	}
-	ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
-		      "have read len of body is %O", content_length);
 	temp[content_length-1] = '\0';
-	ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
-		      "have read body is: %s", temp);
-	/*TODO parse para*/
 	parse_head = parse_para(temp, dev_name, dev_id);
-	ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
-		      "parse dev%s=%s", dev_name, dev_id);
 	redis_store(dev_name, dev_id, DEVICE, NULL, r);
 	while (parse_head != NULL) {
 		parse_head = parse_para(parse_head, key, value);
@@ -205,7 +198,6 @@ static ngx_int_t ngx_http_monitor_handler(ngx_http_request_t *r)
 
 {
 	r->request_body_in_file_only = 1;
-	ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "r->request_body_in_file_only=%ui", r->request_body_in_file_only);
     //±ØÐëÊÇGET»òÕßHEAD·œ·š£¬·ñÔò·µ»Ø405 Not Allowed
 	
     if (!(r->method & (NGX_HTTP_POST | NGX_HTTP_HEAD)))
