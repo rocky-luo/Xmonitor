@@ -2,6 +2,7 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 #include <stdio.h>
+#include <string.h>
 #include "adapters/libev.h"
 #include "hiredis.h"
 #define DEVICE	1
@@ -10,28 +11,58 @@
 static char *
 ngx_http_monitor(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_monitor_handler(ngx_http_request_t *r);
-int redis_store(char *key, char *value, int type,char *dev_id)
+
+void getCallback(redisAsyncContext *c, void *r, void *privdata) {
+	redisReply *reply = r;
+	ngx_http_request_t *rq = privdata;
+    	if (reply == NULL) {
+		ngx_log_debug(NGX_LOG_DEBUG_HTTP, rq->connection->log, 0, \
+			      "unexpected err in redisAsyncContext!");
+		return;
+	}
+    	redisAsyncDisconnect(c);
+	return;
+}
+
+void connectCallback(const redisAsyncContext *c, int status) {
+    if (status != REDIS_OK) {
+	/*TODO */
+        return;
+    }
+	return;
+}
+
+void disconnectCallback(const redisAsyncContext *c, int status) {
+    if (status != REDIS_OK) {
+	/*TODO */
+        return;
+    }
+	return;
+}
+
+int redis_store(char *key, char *value, int type,char *dev_id, \
+		ngx_http_request_t *r)
 {
     	redisAsyncContext *c = redisAsyncConnect("127.0.0.1", 6379);
     	if (c->err) {
         	/* TODO can't connect redis*/
-	
+		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
+			      "can't connect redis");
         	return 1;
     	}
     	redisLibevAttach(EV_DEFAULT_ c);
     	redisAsyncSetConnectCallback(c,connectCallback);
     	redisAsyncSetDisconnectCallback(c,disconnectCallback);
 	if (type == DEVICE) {
-    		redisAsyncCommand(c, NULL, NULL, "ZADD device:id %s %s", \
-				  value, key);
+    		redisAsyncCommand(c, getCallback, r, \
+				  "ZADD device:id %s %s", value, key);
 	}
 	else if (type == PARA) {
-		redisAsyncCommand(c, NULL, NULL, "SADD para:dev_id:%s %s", \
-				  dev_id, key);
-		redisAsyncCommand(c, NULL, NULL, "SET para:%s:%s %s", \
-				  dev_id, key, valuse);
+		redisAsyncCommand(c, getCallback, r, \
+				  "SADD para:dev_id:%s %s", dev_id, key);
+		redisAsyncCommand(c, getCallback, r, "SET para:%s:%s %s", \
+				  dev_id, key, value);
 	}
-	redisAsyncDisconnect(c);
     	ev_loop(EV_DEFAULT_ 0);
 	return;	
 	
@@ -46,8 +77,8 @@ char *parse_para(char *p, char *key, char *value)
 	if (temp ==NULL)
 		return NULL;
 	len = temp - p;
-	stncat(key, p, len);
-	stcat(key, "\0");
+	strncat(key, p, len);
+	strcat(key, "\0");
 	p = ++temp;
 	temp = strchr(p, '&');
 	len = temp - p;
@@ -57,35 +88,12 @@ char *parse_para(char *p, char *key, char *value)
 	return p;
 	
 }
-void getCallback(redisAsyncContext *c, void *r, void *privdata) {
-    redisReply *reply = r;
-    if (reply == NULL) return;
-    printf("argv[%s]: %s\n", (char*)privdata, reply->str);
 
-    /* Disconnect after receiving the reply to GET */
-    redisAsyncDisconnect(c);
-}
-
-void connectCallback(const redisAsyncContext *c, int status) {
-    if (status != REDIS_OK) {
-	/*TODO */
-        return;
-    }
-	return
-}
-
-void disconnectCallback(const redisAsyncContext *c, int status) {
-    if (status != REDIS_OK) {
-	/*TODO */
-        return;
-    }
-	return;
-}
 
 static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 {
 	off_t content_length;
-	content_length = r->headers_in->content_length_n;
+	content_length = r->headers_in.content_length_n+1;
 	char temp[content_length];
 	char *parse_head;
 	char key[10];
@@ -93,18 +101,28 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 	char dev_name[10];
 	char dev_id[10];
 	ssize_t n;
-	n = ngx_read_file(r->request_body->temp_file->file, temp, content_length, 0);
+	n = ngx_read_file(&r->request_body->temp_file->file, temp, \
+			  content_length, 0);
 	if (n !=  content_length) {
 		/*TODO */
+		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
+		      "body length is %O,but read %z\n", content_length, n);
 	}
+	ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
+		      "have read len of body is %O", content_length);
+	temp[content_length-1] = '\0';
+	ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
+		      "have read body is: %s", temp);
 	/*TODO parse para*/
-	parse_head = parse_para(dev_name, dev_id, value);
-	redis_store(dev_name, dev_id, DEVICE, NULL);
+	parse_head = parse_para(temp, dev_name, dev_id);
+	ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
+		      "parse dev%s=%s", dev_name, dev_id);
+	redis_store(dev_name, dev_id, DEVICE, NULL, r);
 	while (parse_head != NULL) {
 		parse_head = parse_para(parse_head, key, value);
-		redis_store(key, value, PARA, dev_id);
+		redis_store(key, value, PARA, dev_id, r);
 	}
-	ngx_http_finalize_request(r, 0)
+	ngx_http_finalize_request(r, 0);
 		
 }
 static ngx_command_t  ngx_http_monitor_commands[] =
@@ -186,9 +204,10 @@ ngx_http_monitor(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 static ngx_int_t ngx_http_monitor_handler(ngx_http_request_t *r)
 
 {
-
+	r->request_body_in_file_only = 1;
+	ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "r->request_body_in_file_only=%ui", r->request_body_in_file_only);
     //±ØÐëÊÇGET»òÕßHEAD·œ·š£¬·ñÔò·µ»Ø405 Not Allowed
-
+	
     if (!(r->method & (NGX_HTTP_POST | NGX_HTTP_HEAD)))
 
     {
