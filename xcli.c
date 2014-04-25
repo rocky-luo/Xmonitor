@@ -1,3 +1,4 @@
+#include <unistd.h>
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -13,17 +14,16 @@
 #include <arpa/inet.h>
 
 #define IPSTR "127.0.0.1"
-#define PORT 8080
-#define BUFSIZE 1024
-
-int main(int argc, char **argv)
+#define PORT 80
+#define BUFSIZE 4096
+int send_data(pid_t dev_id)
 {
         int sockfd, ret, i, h;
         struct sockaddr_in servaddr;
         char str1[4096], str2[4096], buf[BUFSIZE], *str;
         socklen_t len;
         fd_set   t_set1;
-        struct timeval  tv;
+        
 
         if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0 ) {
                 printf("创建网络连接失败,本线程即将终止---socket error!\n");
@@ -46,7 +46,7 @@ int main(int argc, char **argv)
 
         //发送数据
         memset(str2, 0, 4096);
-        strcat(str2, "id=1000&");
+        sprintf(str2, "id%d=%d&", dev_id,dev_id);
 	strcat(str2, "stat1=1&");
 	strcat(str2, "stat2=2&");
 	strcat(str2, "stat3=3&");
@@ -80,36 +80,50 @@ int main(int argc, char **argv)
         FD_ZERO(&t_set1);
         FD_SET(sockfd, &t_set1);
 
-        while(1){
-                sleep(2);
-                tv.tv_sec= 0;
-                tv.tv_usec= 0;
-                h= 0;
-                printf("--------------->1");
-                h= select(sockfd +1, &t_set1, NULL, NULL, &tv);
-                printf("--------------->2");
+        h= 0;
+        printf("--------------->1");
+        h= select(sockfd +1, &t_set1, NULL, NULL, NULL);
+        printf("--------------->2\n");
 
                 //if (h == 0) continue;
-                if (h < 0) {
-                        close(sockfd);
-                        printf("在读取数据报文时SELECT检测到异常，该异常导致线程终止！\n");
+        if (h < 0) {
+                close(sockfd);
+                printf("在读取数据报文时SELECT检测到异常，该异常导致线程终止！\n");
+                return -1;
+        };
+
+        if (h > 0){
+                memset(buf, 0, BUFSIZE);
+                i= read(sockfd, buf, BUFSIZE-1);
+                if (i==0){
+                       	close(sockfd);
+        	  	printf("读取数据报文时发现远端关闭，该线程终止！\n");
                         return -1;
-                };
-
-                if (h > 0){
-                        memset(buf, 0, 4096);
-                        i= read(sockfd, buf, 4095);
-                        if (i==0){
-                                close(sockfd);
-                                printf("读取数据报文时发现远端关闭，该线程终止！\n");
-                                return -1;
-                        }
-
-                        printf("%s\n", buf);
                 }
+
+                printf("%s\n", buf);
         }
+        
         close(sockfd);
-
-
+	return 0;	
+}
+int main(int argc, char **argv)
+{
+	int ncli;
+	pid_t this, new,ppid;
+	if (argc != 2) {
+		printf("plese input right para\n");
+		return 0;
+	}
+	ncli = atoi(argv[1]);
+	while (--ncli > 0) {
+		new = fork();
+		if (new == 0)
+			break;
+		else if (new == -1)
+			fprintf(stderr, "main:%s\n", strerror(errno));
+	}
+	this = getpid();
+	send_data(this);
         return 0;
 }

@@ -17,7 +17,7 @@ void getCallback(redisAsyncContext *c, void *r, void *privdata) {
 	ngx_http_request_t *rq = privdata;
     	if (reply == NULL) {
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, rq->connection->log, 0, \
-			      "unexpected err in redisAsyncContext!");
+			      "++rocky_X++ reply == NULL, is command OK");
 		return;
 	}
     	redisAsyncDisconnect(c);
@@ -35,6 +35,8 @@ void connectCallback(const redisAsyncContext *c, int status) {
 void disconnectCallback(const redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
 	/*TODO */
+	/*	ngx_log_debug(NGX_LOG_DEBUG_HTTP, rq->connection->log, 0, \
+			      "redis error:%s", c->errstr);*/
         return;
     }
 	return;
@@ -47,7 +49,7 @@ int redis_store(char *key, char *value, int type,char *dev_id, \
     	if (c->err) {
         	/* TODO can't connect redis*/
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
-			      "can't connect redis");
+			      "++rocky_X++ can't connect redis");
         	return 1;
     	}
     	redisLibevAttach(EV_DEFAULT_ c);
@@ -93,8 +95,8 @@ char *parse_para(char *p, char *key, char *value)
 static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 {
 	off_t content_length;
-	content_length = r->headers_in.content_length_n+1;
-	char temp[content_length];
+	content_length = r->headers_in.content_length_n;
+	char temp[content_length+1];
 	char *parse_head;
 	char key[10];
 	char value[10];
@@ -106,9 +108,9 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 	if (n !=  content_length) {
 		/*TODO */
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
-		      "body length is %O,but read %z\n", content_length, n);
+		      "++rocky_X++body length is %O,but read %z\n", content_length, n);
 	}
-	temp[content_length-1] = '\0';
+	temp[content_length] = '\0';
 	parse_head = parse_para(temp, dev_name, dev_id);
 	redis_store(dev_name, dev_id, DEVICE, NULL, r);
 	while (parse_head != NULL) {
