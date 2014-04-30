@@ -51,7 +51,7 @@ void disconnectCallback(const redisAsyncContext *c, int status) {
 	return;
 }
 
-int redis_store(char *key, char *value, int type,char *dev_id, \
+ngx_int_t redis_store(char *key, char *value, int type,char *dev_id, \
 		ngx_http_request_t *r)
 {
 	ngx_http_monitor_redisasy_t env = {0, 0, r};
@@ -60,6 +60,7 @@ int redis_store(char *key, char *value, int type,char *dev_id, \
         	/* TODO can't connect redis*/
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
 			      "++rocky_X++ can't connect redis");
+    		redisAsyncDisconnect(c);
         	return 1;
     	}
     	redisLibevAttach(EV_DEFAULT_ c);
@@ -78,6 +79,8 @@ int redis_store(char *key, char *value, int type,char *dev_id, \
 				  dev_id, key, value);
 	}
     	ev_loop(EV_DEFAULT_ 0);
+	if (env.errflag != 0)
+		return env.errflag;
 	return 0;	
 	
 }
