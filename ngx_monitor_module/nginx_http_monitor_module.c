@@ -14,8 +14,8 @@ typedef struct {
 	ngx_http_request_t *r;
 } ngx_http_monitor_redisasy_t;
 typedef struct {
-	ngx_string key;
-	ngx_string value;
+	ngx_str_t key;
+	ngx_str_t value;
 	ngx_queue_t l;
 } ngx_http_monitor_elt_t;
 
@@ -38,6 +38,8 @@ void getCallback(redisAsyncContext *c, void *r, void *privdata) {
 			      "[Xmonitor] fail:reply ==REDIS_REPLY_ERROR");
 	}
 	if (env->ccount == 0) {
+		//ngx_log_debug(NGX_LOG_DEBUG_HTTP, env->r->connection->log,0,"[Xmonitor]here i can free redis");
+		ngx_log_debug(NGX_LOG_DEBUG_HTTP, env->r->connection->log,0,"[Xmonitor]when free redis env->errflag=%d",env->errflag);
     		redisAsyncDisconnect(c);
 	}
 	return;
@@ -92,9 +94,9 @@ ngx_int_t redis_store(ngx_http_request_t *r, ngx_queue_t *h)
 		t = ngx_queue_data(travel, ngx_http_monitor_elt_t, l);
 		redisAsyncCommand(c, getCallback, &env, \
 				  "SADD para:dev_id:%s %s", \
-				  dev->key.data, t->key.data);
+				  dev->value.data, t->key.data);
 		redisAsyncCommand(c, getCallback, &env, \
-				  "SET para:%s:%s %s",dev->key.data, \
+				  "SET para:%s:%s %s",dev->value.data, \
 				  t->key.data, t->value.data);
 		travel = ngx_queue_next(travel);
 	}
@@ -125,7 +127,7 @@ ngx_int_t redis_store(ngx_http_request_t *r, ngx_queue_t *h)
 
 ngx_queue_t *parse_para(ngx_http_request_t *r, ngx_str_t *p)
 {
-	char *temp;
+	u_char *temp;
 	size_t nleft = p->len;
 	u_char *pdata = p->data;
 	ngx_http_monitor_elt_t *u;
@@ -144,7 +146,7 @@ ngx_queue_t *parse_para(ngx_http_request_t *r, ngx_str_t *p)
 				      "[Xmonitor] fail:input format error,can't find '='");
 			return NULL;
 		}
-		u == ngx_pcalloc(r->pool, sizeof(ngx_http_monitor_elt_t));
+		u = ngx_pcalloc(r->pool, sizeof(ngx_http_monitor_elt_t));
 		if (u == NULL) {
 			ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
 				      r->connection->log, 0, \
@@ -152,7 +154,7 @@ ngx_queue_t *parse_para(ngx_http_request_t *r, ngx_str_t *p)
 			return NULL;
 		}
 		u->key.data = pdata;
-		u->key.len = temp - pdata;
+		u->key.len = (size_t)(temp - pdata);
 		nleft = nleft - u->key.len - 1;
 		pdata = temp + 1;
 		ngx_memzero(temp,1);
@@ -164,7 +166,7 @@ ngx_queue_t *parse_para(ngx_http_request_t *r, ngx_str_t *p)
 			return NULL;
 		}
 		u->value.data = pdata;
-		u->value.len = temp - pdata;
+		u->value.len = (size_t)(temp - pdata);
 		nleft = nleft - u->value.len -1;
 		pdata = temp + 1;
 		ngx_memzero(temp,1);
@@ -181,9 +183,9 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 	content_length = r->headers_in.content_length_n;
 	//char temp[content_length+1];
 	char *parse_head;
-	//ssize_t n;
+	ssize_t n;
 	ngx_int_t rc;
-	u_char *bodydata = pcalloc(r->pool, content_length);
+	u_char *bodydata = ngx_pcalloc(r->pool, content_length);
 	if (bodydata == NULL) {
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
 			      r->connection->log, 0, \
@@ -203,7 +205,7 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
 		      "[Xmonitor] fail:body length is %O,but read %z\n", content_length, n);
 	}
-	ngx_str_t *body = pcalloc(r->pool, sizeof(ngx_str_t));
+	ngx_str_t *body = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
 	if (body == NULL) {
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
 			      r->connection->log, 0, \
@@ -247,7 +249,7 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 	rc = ngx_http_monitor_send_result(r, &result);
 	if (rc == NGX_ERROR || rc > NGX_OK)
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, \
-			"++rocky_X++ngx_http_monitor_send_result error:%d", rc);
+			"[Xmonitor] fail:ngx_http_monitor_send_result error:%d", rc);
 	ngx_http_finalize_request(r, NGX_HTTP_OK);
 	return;
 	
