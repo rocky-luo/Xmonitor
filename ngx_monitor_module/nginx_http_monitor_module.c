@@ -13,6 +13,11 @@ typedef struct {
 	ngx_int_t ccount;
 	ngx_http_request_t *r;
 } ngx_http_monitor_redisasy_t;
+typedef struct {
+	ngx_string key;
+	ngx_string value;
+	ngx_queue_t l;
+} ngx_http_monitor_keyvalue_t;
 
 static char *
 ngx_http_monitor(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
@@ -22,10 +27,15 @@ void getCallback(redisAsyncContext *c, void *r, void *privdata) {
 	redisReply *reply = r;
 	ngx_http_monitor_redisasy_t *env = privdata;
 	env->ccount--;
-    	if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
+    	if (reply == NULL) {
 		env->errflag++;
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, env->r->connection->log, 0, \
-			      "++rocky_X++ reply == NULL or ERROR");
+			      "[Xmonitor] fail:reply == NULL");
+	}
+    	if (reply->type == REDIS_REPLY_ERROR) {
+		env->errflag++;
+		ngx_log_debug(NGX_LOG_DEBUG_HTTP, env->r->connection->log, 0, \
+			      "[Xmonitor] fail:reply ==REDIS_REPLY_ERROR");
 	}
 	if (env->ccount == 0) {
     		redisAsyncDisconnect(c);
@@ -84,25 +94,53 @@ ngx_int_t redis_store(char *key, char *value, int type,char *dev_id, \
 	return 0;	
 	
 }
-char *parse_para(char *p, char *key, char *value)
+
+ngx_queue_t *parse_para(ngx_http_request_t *r, ngx_str_t *p)
 {
 	char *temp;
-	int len;
-	key[0] = '\0';
-	value[0] = '\0';
-	temp = strchr(p, '=');
-	if (temp ==NULL)
+	size_t nleft = p->len;
+	u_char *pdata = p->data;
+	ngx_http_monitor_elt *u;
+	ngx_queue_t *lhead = ngx_pcalloc(r->pool, sizeof(ngx_queue_t));
+	if (lhead == NULL) {
+		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
+			      "[Xmonitor] fail: can't pcalloc ngx_queue_t");
 		return NULL;
-	len = temp - p;
-	strncat(key, p, len);
-	strcat(key, "\0");
-	p = ++temp;
-	temp = strchr(p, '&');
-	len = temp - p;
-	strncat(value, p, len);
-	strcat(value, "\0");
-	p = ++temp;
-	return p;
+	}
+	ngx_queue_init(lhead);
+	while (nleft != 0) {
+		temp = ngx_strchr(pdata, '=');
+		if (temp == NULL) {
+			ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
+				      r->connection->log, 0, \
+				      "[Xmonitor] fail:input format error,can't find '='");
+			return NULL;
+		}
+		u == ngx_pcalloc(r->pool, sizeof(ngx_http_monitor_elt));
+		if (u == NULL) {
+			ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
+				      r->connection->log, 0, \
+				      "[Xmonitor] fail:can't pcalloc ngx_http_monitor_elt");
+			return NULL;
+		}
+		u->key.data = pdata;
+		u->key.len = temp - pdata;
+		nleft = nleft - u->key.len - 1;
+		pdata = temp + 1;
+		temp = ngx_strchr(pdata, '&');
+		if (temp == NULL) {
+			ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
+				      r->connection->log, 0, \
+				      "[Xmonitor] fail:input format error,can't find '&'");
+			return NULL;
+		}
+		u->value.data = pdata;
+		u->value.len = temp - pdata;
+		nleft = nleft - u->value.len -1;
+		pdata = temp + 1;
+		ngx_queue_insert_tail(lhead, &(u->l));
+	}
+	return lhead;
 	
 }
 
@@ -119,14 +157,42 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 	char dev_id[10];
 	ssize_t n;
 	ngx_int_t rc;
-	n = ngx_read_file(&r->request_body->temp_file->file, temp, \
+	u_char *bodydata = pcalloc(r->pool, content_length);
+	if (bodydata == NULL) {
+		ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
+			      r->connection->log, 0, \
+			      "[Xmonitor] fail:can't pcalloc for request bodydata");
+		ngx_str_t result = ngx_string("can't pcalloc for request bodydata");
+		rc = ngx_http_monitor_send_result(r, &result);
+		if (rc == NGX_ERROR || rc > NGX_OK)
+			ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, \
+			"[Xmonitor] fail:ngx_http_monitor_send_result error:%d", rc);
+		ngx_http_finalize_request(r, NGX_ERROR);
+		return;
+	}
+	n = ngx_read_file(&r->request_body->temp_file->file, bodydata, \
 			  content_length, 0);
 	if (n !=  content_length) {
 		/*TODO */
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
-		      "++rocky_X++body length is %O,but read %z\n", content_length, n);
+		      "[Xmonitor] fail:body length is %O,but read %z\n", content_length, n);
 	}
-	temp[content_length] = '\0';
+	ngx_str_t *body = pcalloc(r->pool, sizeof(ngx_str_t));
+	if (body == NULL) {
+		ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
+			      r->connection->log, 0, \
+			      "[Xmonitor] fail:can't pcalloc for request body");
+		ngx_str_t result = ngx_string("can't pcalloc for request body");
+		rc = ngx_http_monitor_send_result(r, &result);
+		if (rc == NGX_ERROR || rc > NGX_OK)
+			ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, \
+			"[Xmonitor] fail:ngx_http_monitor_send_result error:%d", rc);
+		ngx_http_finalize_request(r, NGX_ERROR);
+		return;
+	}
+	body->data = bodydata;
+	body->len = content_length;
+/*	
 	parse_head = parse_para(temp, dev_name, dev_id);
 	if (redis_store(dev_name, dev_id, DEVICE, NULL, r) != 0) {
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
@@ -163,7 +229,7 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 			"++rocky_X++ngx_http_monitor_send_result error:%d", rc);
 	ngx_http_finalize_request(r, NGX_HTTP_OK);
 	return;
-		
+*/		
 }
 static ngx_command_t  ngx_http_monitor_commands[] =
 {
