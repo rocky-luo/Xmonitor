@@ -26,17 +26,21 @@ static ngx_int_t ngx_http_monitor_send_result(ngx_http_request_t *r, ngx_str_t *
 void getCallback(redisAsyncContext *c, void *r, void *privdata) {
 	redisReply *reply = r;
 	ngx_http_monitor_redisasy_t *env = privdata;
-	env->ccount--;
-    	if (reply == NULL) {
+	//env->ccount--;
+    	if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
 		env->errflag++;
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, env->r->connection->log, 0, \
-			      "[Xmonitor] fail:reply == NULL");
+			      "[Xmonitor] fail:reply == NULL or reply->type == REDIS_REPLY_ERROR");
+    		redisAsyncDisconnect(c);
 	}
+/*
     	if (reply->type == REDIS_REPLY_ERROR) {
 		env->errflag++;
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, env->r->connection->log, 0, \
 			      "[Xmonitor] fail:reply ==REDIS_REPLY_ERROR");
+    		redisAsyncDisconnect(c);
 	}
+*/
 	if (env->ccount == 0) {
 		//ngx_log_debug(NGX_LOG_DEBUG_HTTP, env->r->connection->log,0,"[Xmonitor]here i can free redis");
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, env->r->connection->log,0,"[Xmonitor]when free redis env->errflag=%d",env->errflag);
@@ -48,6 +52,9 @@ void getCallback(redisAsyncContext *c, void *r, void *privdata) {
 void connectCallback(const redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
 	/*TODO */
+		ngx_log_debug(NGX_LOG_DEBUG_HTTP, ((ngx_http_request_t *)c->data)->connection->log, 0, \
+				"[Xmonitor] fail:connectcb can't connect redis:%s", c->errstr);
+//    		redisAsyncDisconnect(c);
         return;
     }
 	return;
@@ -56,8 +63,8 @@ void connectCallback(const redisAsyncContext *c, int status) {
 void disconnectCallback(const redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
 	/*TODO */
-	/*	ngx_log_debug(NGX_LOG_DEBUG_HTTP, rq->connection->log, 0, \
-			      "redis error:%s", c->errstr);*/
+		ngx_log_debug(NGX_LOG_DEBUG_HTTP, ((ngx_http_request_t *)c->data)->connection->log, 0, \
+			      "[Xmonitor] fail:redis disconnect with error:%s", c->errstr);
         return;
     }
 	return;
@@ -65,6 +72,7 @@ void disconnectCallback(const redisAsyncContext *c, int status) {
 
 ngx_int_t redis_store(ngx_http_request_t *r, ngx_queue_t *h)
 {
+//	signal(SIGPIPE, SIG_IGN);
 	ngx_http_monitor_redisasy_t env = {0, 0, r};
     	redisAsyncContext *c = redisAsyncConnect("127.0.0.1", 6379);
     	if (c->err) {
@@ -73,6 +81,7 @@ ngx_int_t redis_store(ngx_http_request_t *r, ngx_queue_t *h)
     		redisAsyncDisconnect(c);
         	return 1;
     	}
+	c->data = r;
     	redisLibevAttach(EV_DEFAULT_ c);
     	redisAsyncSetConnectCallback(c,connectCallback);
     	redisAsyncSetDisconnectCallback(c,disconnectCallback);
@@ -86,21 +95,47 @@ ngx_int_t redis_store(ngx_http_request_t *r, ngx_queue_t *h)
 	ngx_http_monitor_elt_t *dev = ngx_queue_data(ngx_queue_head(h), \
 					ngx_http_monitor_elt_t, l);
 	ngx_http_monitor_elt_t *t;
+    	redisAsyncCommand(c, NULL, NULL, \
+			  "ZADD device:id %s %s", dev->value.data, \
+			  dev->key.data);
+	env.ccount--;
+/*
     	redisAsyncCommand(c, getCallback, &env, \
 			  "ZADD device:id %s %s", dev->value.data, \
 			  dev->key.data);
+*/
 	travel = ngx_queue_next(travel);
 	while (travel != ngx_queue_sentinel(h)) {
 		t = ngx_queue_data(travel, ngx_http_monitor_elt_t, l);
+		env.ccount--;
+		redisAsyncCommand(c, NULL, NULL, \
+				  "SADD para:dev_id:%s %s", \
+				  dev->value.data, t->key.data);
+		env.ccount--;
+		if(env.ccount == 0) {
+			redisAsyncCommand(c, getCallback, &env, \
+				  "SET para:%s:%s %s",dev->value.data, \
+				  t->key.data, t->value.data);
+		}
+		else {
+			redisAsyncCommand(c, NULL, NULL, \
+				  "SET para:%s:%s %s",dev->value.data, \
+				  t->key.data, t->value.data);
+ 		}
+/*
 		redisAsyncCommand(c, getCallback, &env, \
 				  "SADD para:dev_id:%s %s", \
 				  dev->value.data, t->key.data);
 		redisAsyncCommand(c, getCallback, &env, \
 				  "SET para:%s:%s %s",dev->value.data, \
 				  t->key.data, t->value.data);
+*/
 		travel = ngx_queue_next(travel);
 	}
     	ev_loop(EV_DEFAULT_ 0);
+	ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
+			      "[Xmoniter] fail:end of ev_loop,errflag:%d",env.errflag);
+
 	if (env.errflag != 0)
 		return env.errflag;
 	return 0;	
