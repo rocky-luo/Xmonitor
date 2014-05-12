@@ -7,6 +7,7 @@
 #include "hiredis.h"
 #define DEVICE	1
 #define PARA 	2
+#define redis_ncommand(a) (a = (a -1 )*2 + 1)
 
 typedef struct {
 	ngx_int_t errflag;
@@ -26,24 +27,13 @@ static ngx_int_t ngx_http_monitor_send_result(ngx_http_request_t *r, ngx_str_t *
 void getCallback(redisAsyncContext *c, void *r, void *privdata) {
 	redisReply *reply = r;
 	ngx_http_monitor_redisasy_t *env = privdata;
-	//env->ccount--;
+	env->ccount--;
     	if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
 		env->errflag++;
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, env->r->connection->log, 0, \
-			      "[Xmonitor] fail:reply == NULL or reply->type == REDIS_REPLY_ERROR");
-    		redisAsyncDisconnect(c);
+			      "[Xmonitor] fail:reply == NULL or reply->type == REDIS_REPLY_ERROR:%s",c->errstr);
 	}
-/*
-    	if (reply->type == REDIS_REPLY_ERROR) {
-		env->errflag++;
-		ngx_log_debug(NGX_LOG_DEBUG_HTTP, env->r->connection->log, 0, \
-			      "[Xmonitor] fail:reply ==REDIS_REPLY_ERROR");
-    		redisAsyncDisconnect(c);
-	}
-*/
 	if (env->ccount == 0) {
-		//ngx_log_debug(NGX_LOG_DEBUG_HTTP, env->r->connection->log,0,"[Xmonitor]here i can free redis");
-		ngx_log_debug(NGX_LOG_DEBUG_HTTP, env->r->connection->log,0,"[Xmonitor]when free redis env->errflag=%d",env->errflag);
     		redisAsyncDisconnect(c);
 	}
 	return;
@@ -51,10 +41,8 @@ void getCallback(redisAsyncContext *c, void *r, void *privdata) {
 
 void connectCallback(const redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
-	/*TODO */
-		ngx_log_debug(NGX_LOG_DEBUG_HTTP, ((ngx_http_request_t *)c->data)->connection->log, 0, \
-				"[Xmonitor] fail:connectcb can't connect redis:%s", c->errstr);
-//    		redisAsyncDisconnect(c);
+		ngx_log_debug(NGX_LOG_DEBUG_HTTP, ((ngx_http_monitor_redisasy_t *)(c->data))->r->connection->log, 0, \
+				"[Xmonitor] fail:connect error:%s", c->errstr);
         return;
     }
 	return;
@@ -62,9 +50,8 @@ void connectCallback(const redisAsyncContext *c, int status) {
 
 void disconnectCallback(const redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
-	/*TODO */
-		ngx_log_debug(NGX_LOG_DEBUG_HTTP, ((ngx_http_request_t *)c->data)->connection->log, 0, \
-			      "[Xmonitor] fail:redis disconnect with error:%s", c->errstr);
+		ngx_log_debug(NGX_LOG_DEBUG_HTTP, ((ngx_http_monitor_redisasy_t *)(c->data))->r->connection->log, 0, \
+			      "[Xmonitor] fail:redis disconnect error:%s", c->errstr);
         return;
     }
 	return;
@@ -72,7 +59,7 @@ void disconnectCallback(const redisAsyncContext *c, int status) {
 
 ngx_int_t redis_store(ngx_http_request_t *r, ngx_queue_t *h)
 {
-//	signal(SIGPIPE, SIG_IGN);
+	signal(SIGPIPE, SIG_IGN);
 	ngx_http_monitor_redisasy_t env = {0, 0, r};
     	redisAsyncContext *c = redisAsyncConnect("127.0.0.1", 6379);
     	if (c->err) {
@@ -81,7 +68,7 @@ ngx_int_t redis_store(ngx_http_request_t *r, ngx_queue_t *h)
     		redisAsyncDisconnect(c);
         	return 1;
     	}
-	c->data = r;
+	c->data = &env;
     	redisLibevAttach(EV_DEFAULT_ c);
     	redisAsyncSetConnectCallback(c,connectCallback);
     	redisAsyncSetDisconnectCallback(c,disconnectCallback);
@@ -90,74 +77,31 @@ ngx_int_t redis_store(ngx_http_request_t *r, ngx_queue_t *h)
 		env.ccount++;
 		travel = ngx_queue_next(travel);
 	}
-	env.ccount = (env.ccount-1)*2+1;
+	redis_ncommand(env.ccount);
 	travel = ngx_queue_head(h);
 	ngx_http_monitor_elt_t *dev = ngx_queue_data(ngx_queue_head(h), \
 					ngx_http_monitor_elt_t, l);
 	ngx_http_monitor_elt_t *t;
-    	redisAsyncCommand(c, NULL, NULL, \
-			  "ZADD device:id %s %s", dev->value.data, \
-			  dev->key.data);
-	env.ccount--;
-/*
     	redisAsyncCommand(c, getCallback, &env, \
 			  "ZADD device:id %s %s", dev->value.data, \
 			  dev->key.data);
-*/
 	travel = ngx_queue_next(travel);
 	while (travel != ngx_queue_sentinel(h)) {
 		t = ngx_queue_data(travel, ngx_http_monitor_elt_t, l);
-		env.ccount--;
-		redisAsyncCommand(c, NULL, NULL, \
-				  "SADD para:dev_id:%s %s", \
-				  dev->value.data, t->key.data);
-		env.ccount--;
-		if(env.ccount == 0) {
-			redisAsyncCommand(c, getCallback, &env, \
-				  "SET para:%s:%s %s",dev->value.data, \
-				  t->key.data, t->value.data);
-		}
-		else {
-			redisAsyncCommand(c, NULL, NULL, \
-				  "SET para:%s:%s %s",dev->value.data, \
-				  t->key.data, t->value.data);
- 		}
-/*
 		redisAsyncCommand(c, getCallback, &env, \
 				  "SADD para:dev_id:%s %s", \
 				  dev->value.data, t->key.data);
 		redisAsyncCommand(c, getCallback, &env, \
 				  "SET para:%s:%s %s",dev->value.data, \
 				  t->key.data, t->value.data);
-*/
+
 		travel = ngx_queue_next(travel);
 	}
     	ev_loop(EV_DEFAULT_ 0);
-	ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
-			      "[Xmoniter] fail:end of ev_loop,errflag:%d",env.errflag);
-
 	if (env.errflag != 0)
 		return env.errflag;
 	return 0;	
 	
-/*
-	if (type == DEVICE) {
-		env.ccount = 1;
-    		redisAsyncCommand(c, getCallback, &env, \
-				  "ZADD device:id %s %s", value, key);
-	}
-	else if (type == PARA) {
-		env.ccount = 2;
-		redisAsyncCommand(c, getCallback, &env, \
-				  "SADD para:dev_id:%s %s", dev_id, key);
-		redisAsyncCommand(c, getCallback, &env, "SET para:%s:%s %s", \
-				  dev_id, key, value);
-	}
-    	ev_loop(EV_DEFAULT_ 0);
-	if (env.errflag != 0)
-		return env.errflag;
-	return 0;	
-*/	
 }
 
 ngx_queue_t *parse_para(ngx_http_request_t *r, ngx_str_t *p)
@@ -179,6 +123,11 @@ ngx_queue_t *parse_para(ngx_http_request_t *r, ngx_str_t *p)
 			ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
 				      r->connection->log, 0, \
 				      "[Xmonitor] fail:input format error,can't find '='");
+
+			ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
+				      r->connection->log, 0, \
+				      "[Xmonitor] fail:%uz",nleft);
+
 			return NULL;
 		}
 		u = ngx_pcalloc(r->pool, sizeof(ngx_http_monitor_elt_t));
@@ -220,6 +169,7 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 	char *parse_head;
 	ssize_t n;
 	ngx_int_t rc;
+	u_char *end;
 	u_char *bodydata = ngx_pcalloc(r->pool, content_length);
 	if (bodydata == NULL) {
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
@@ -240,6 +190,12 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
 		      "[Xmonitor] fail:body length is %O,but read %z\n", content_length, n);
 	}
+	/* if use ab as test tool, the opt '-p' makes request body to be added a flag as end of the request body, it will make parse_para() error. here remove the flag*/
+	end = bodydata + content_length - 1;
+	while ( *end != '&') {
+		content_length--;
+		end--;
+	}
 	ngx_str_t *body = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
 	if (body == NULL) {
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
@@ -249,7 +205,7 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 		rc = ngx_http_monitor_send_result(r, &result);
 		if (rc == NGX_ERROR || rc > NGX_OK)
 			ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, \
-			"[Xmonitor] fail:ngx_http_monitor_send_result error:%d", rc);
+			0, "[Xmonitor] fail:ngx_http_monitor_send_result error:%i", rc);
 		ngx_http_finalize_request(r, NGX_ERROR);
 		return;
 	}
@@ -264,71 +220,29 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 		rc = ngx_http_monitor_send_result(r, &result);
 		if (rc == NGX_ERROR || rc > NGX_OK)
 			ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, \
-			"[Xmonitor] fail:ngx_http_monitor_send_result error:%d", rc);
+			0, "[Xmonitor] fail:ngx_http_monitor_send_result error:%i", rc);
 		ngx_http_finalize_request(r, NGX_ERROR);
 	}
 	rc = redis_store(r, blist);
 	if (rc != 0) {
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
-			    "[Xmonitor] fail:redis_store fail with %d", rc);
+			    "[Xmonitor] fail:redis_store fail with %i errors", rc);
 			ngx_str_t result = ngx_string("error in redis_store");
 			rc = ngx_http_monitor_send_result(r, &result);
 			if (rc == NGX_ERROR || rc > NGX_OK)
 				ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
 					      r->connection->log, 0, \
-				"[Xmonitor] fail:ngx_http_monitor_send_result error:%d", rc);
+				"[Xmonitor] fail:ngx_http_monitor_send_result error:%i", rc);
 			ngx_http_finalize_request(r, NGX_ERROR);
 			return;
 		}
 	ngx_str_t result = ngx_string("ALL OK");
 	rc = ngx_http_monitor_send_result(r, &result);
 	if (rc == NGX_ERROR || rc > NGX_OK)
-		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, \
-			"[Xmonitor] fail:ngx_http_monitor_send_result error:%d", rc);
-	ngx_http_finalize_request(r, NGX_HTTP_OK);
-	return;
-	
-
-
-
-/*	
-	parse_head = parse_para(temp, dev_name, dev_id);
-	if (redis_store(dev_name, dev_id, DEVICE, NULL, r) != 0) {
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
-			"++rocky_X++redis_store error in %s=%s", dev_name, \
-			dev_id);
-		ngx_str_t result = ngx_string("error in redis_store");
-		rc = ngx_http_monitor_send_result(r, &result);
-		if (rc == NGX_ERROR || rc > NGX_OK)
-			ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, \
-			"++rocky_X++ngx_http_monitor_send_result error:%d", rc);
-		ngx_http_finalize_request(r, NGX_ERROR);
-		return;
-	}
-	while (parse_head != NULL) {
-		parse_head = parse_para(parse_head, key, value);
-		if (redis_store(key, value, PARA, dev_id, r) != 0) {
-			ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, \
-				0, "++rocky_X++redis_store error in %s=%s", \
-				dev_name, dev_id);
-			ngx_str_t result = ngx_string("error in redis_store");
-			rc = ngx_http_monitor_send_result(r, &result);
-			if (rc == NGX_ERROR || rc > NGX_OK)
-				ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
-					      r->connection->log, \
-				"++rocky_X++ngx_http_monitor_send_result error:%d", rc);
-			ngx_http_finalize_request(r, NGX_ERROR);
-			return;
-		}
-	}
-	ngx_str_t result = ngx_string("ALL OK");
-	rc = ngx_http_monitor_send_result(r, &result);
-	if (rc == NGX_ERROR || rc > NGX_OK)
-		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, \
-			"++rocky_X++ngx_http_monitor_send_result error:%d", rc);
+			"[Xmonitor] fail:ngx_http_monitor_send_result error:%i", rc);
 	ngx_http_finalize_request(r, NGX_HTTP_OK);
 	return;
-*/		
 }
 static ngx_command_t  ngx_http_monitor_commands[] =
 {
@@ -410,7 +324,7 @@ static ngx_int_t ngx_http_monitor_handler(ngx_http_request_t *r)
 
 {
 	r->request_body_in_file_only = 1;
-    	if (!(r->method & (NGX_HTTP_POST | NGX_HTTP_HEAD)))
+    	if (!(r->method & (NGX_HTTP_GET | NGX_HTTP_POST | NGX_HTTP_HEAD)))
     	{
         	return NGX_HTTP_NOT_ALLOWED;
     	}

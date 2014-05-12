@@ -1,2 +1,2 @@
 #!/bin/sh
-ab -n 5000 -c 1000 -p post.txt 127.0.0.1:80/iheard
+ab -n 500 -c 100 -p post.txt 127.0.0.1:80/iheard
