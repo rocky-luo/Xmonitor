@@ -106,10 +106,6 @@ ngx_int_t redis_store(ngx_http_request_t *r, ngx_queue_t *h)
 
 ngx_queue_t *parse_para(ngx_http_request_t *r, ngx_str_t *p)
 {
-/*
-	ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
-		"[Xmonitor] note:parse is %V,len is %uz",p,p->len);
-*/
 	u_char *temp;
 	size_t nleft = p->len;
 	u_char *pdata = p->data;
@@ -169,7 +165,6 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 {
 	off_t content_length;
 	content_length = r->headers_in.content_length_n;
-	//char temp[content_length+1];
 	char *parse_head;
 	ssize_t n;
 	ngx_int_t rc;
@@ -189,28 +184,6 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 		return;
 	}
 	body.data = r->request_body->bufs->buf->start;
-/*
-	u_char *bodydata = ngx_pcalloc(r->pool, content_length);
-	if (bodydata == NULL) {
-		ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
-			      r->connection->log, 0, \
-			      "[Xmonitor] fail:can't pcalloc for request bodydata");
-		ngx_str_t result = ngx_string("can't pcalloc for request bodydata");
-		rc = ngx_http_monitor_send_result(r, &result);
-		if (rc == NGX_ERROR || rc > NGX_OK)
-			ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
-				      r->connection->log, 0, \
-				      "[Xmonitor] fail:ngx_http_monitor_send_result error:%d", rc);
-		ngx_http_finalize_request(r, NGX_ERROR);
-		return;
-	}
-	n = ngx_read_file(&r->request_body->temp_file->file, bodydata, \
-			  content_length, 0);
-	if (n !=  content_length) {
-		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
-		      "[Xmonitor] fail:body length is %O,but read %z\n", content_length, n);
-	}
-*/
 	
 	/* if use ab as test tool, the opt '-p' makes request body to be added a flag as end of the request body, it will make parse_para() error. here remove the flag*/
 	end = body.data + content_length - 1;
@@ -219,22 +192,6 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 		end--;
 	}
 	body.len = content_length;
-/*	ngx_str_t *body = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
-	if (body == NULL) {
-		ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
-			      r->connection->log, 0, \
-			      "[Xmonitor] fail:can't pcalloc for request body");
-		ngx_str_t result = ngx_string("can't pcalloc for request body");
-		rc = ngx_http_monitor_send_result(r, &result);
-		if (rc == NGX_ERROR || rc > NGX_OK)
-			ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, \
-			0, "[Xmonitor] fail:ngx_http_monitor_send_result error:%i", rc);
-		ngx_http_finalize_request(r, NGX_ERROR);
-		return;
-	}
-	body->data = bodydata;
-	body->len = content_length;
-*/
 	ngx_queue_t *blist = parse_para(r, &body);
 	if (blist == NULL) {
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
