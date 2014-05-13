@@ -106,6 +106,10 @@ ngx_int_t redis_store(ngx_http_request_t *r, ngx_queue_t *h)
 
 ngx_queue_t *parse_para(ngx_http_request_t *r, ngx_str_t *p)
 {
+/*
+	ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
+		"[Xmonitor] note:parse is %V,len is %uz",p,p->len);
+*/
 	u_char *temp;
 	size_t nleft = p->len;
 	u_char *pdata = p->data;
@@ -170,6 +174,22 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 	ssize_t n;
 	ngx_int_t rc;
 	u_char *end;
+	ngx_str_t body;
+	if (r->request_body->bufs->next != NULL) {
+		ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
+			      r->connection->log, 0, \
+			      "[Xmonitor] fail:request body is too large");
+		ngx_str_t result = ngx_string("request body is too large");
+		rc = ngx_http_monitor_send_result(r, &result);
+		if (rc == NGX_ERROR || rc > NGX_OK)
+			ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
+				      r->connection->log, 0, \
+				      "[Xmonitor] fail:ngx_http_monitor_send_result error:%d", rc);
+		ngx_http_finalize_request(r, NGX_ERROR);
+		return;
+	}
+	body.data = r->request_body->bufs->buf->start;
+/*
 	u_char *bodydata = ngx_pcalloc(r->pool, content_length);
 	if (bodydata == NULL) {
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
@@ -190,13 +210,16 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, \
 		      "[Xmonitor] fail:body length is %O,but read %z\n", content_length, n);
 	}
+*/
+	
 	/* if use ab as test tool, the opt '-p' makes request body to be added a flag as end of the request body, it will make parse_para() error. here remove the flag*/
-	end = bodydata + content_length - 1;
+	end = body.data + content_length - 1;
 	while ( *end != '&') {
 		content_length--;
 		end--;
 	}
-	ngx_str_t *body = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
+	body.len = content_length;
+/*	ngx_str_t *body = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
 	if (body == NULL) {
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
 			      r->connection->log, 0, \
@@ -211,7 +234,8 @@ static void ngx_http_monitor_body_handler(ngx_http_request_t *r)
 	}
 	body->data = bodydata;
 	body->len = content_length;
-	ngx_queue_t *blist = parse_para(r, body);
+*/
+	ngx_queue_t *blist = parse_para(r, &body);
 	if (blist == NULL) {
 		ngx_log_debug(NGX_LOG_DEBUG_HTTP, \
 			      r->connection->log, 0, \
@@ -323,7 +347,7 @@ ngx_http_monitor(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 static ngx_int_t ngx_http_monitor_handler(ngx_http_request_t *r)
 
 {
-	r->request_body_in_file_only = 1;
+//	r->request_body_in_file_only = 1;
     	if (!(r->method & (NGX_HTTP_GET | NGX_HTTP_POST | NGX_HTTP_HEAD)))
     	{
         	return NGX_HTTP_NOT_ALLOWED;
